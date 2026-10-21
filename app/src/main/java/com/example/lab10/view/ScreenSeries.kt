@@ -1,6 +1,7 @@
 package com.example.lab10.view
 
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,10 +23,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -33,13 +35,21 @@ import androidx.navigation.NavHostController
 import com.example.lab10.data.SerieApiService
 import com.example.lab10.data.SerieModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun ContenidoSeriesListado(navController: NavHostController, servicio: SerieApiService) {
-    var listaSeries: SnapshotStateList<SerieModel> = remember { mutableStateListOf() }
+    val context = LocalContext.current
+    val listaSeries = remember { mutableStateListOf<SerieModel>() }
     LaunchedEffect(Unit) {
-        val listado = servicio.selectSeries()
-        listado.forEach { listaSeries.add(it) }
+        try {
+            val listado = servicio.selectSeries()
+            listaSeries.clear()
+            listaSeries.addAll(listado)
+        } catch (e: Exception) {
+            Log.e("SERIES-LISTADO", "Error al cargar series", e)
+            Toast.makeText(context, "Error al cargar: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
     LazyColumn {
         item {
@@ -75,7 +85,7 @@ fun ContenidoSeriesListado(navController: NavHostController, servicio: SerieApiS
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${item.id}",
+                    text = "${item.id ?: 0}",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(0.1f)
@@ -88,7 +98,7 @@ fun ContenidoSeriesListado(navController: NavHostController, servicio: SerieApiS
                 )
                 IconButton(
                     onClick = {
-                        navController.navigate("serieVer/${item.id}")
+                        navController.navigate("serieVer/${item.id ?: 0}")
                         Log.e("SERIE-VER", "ID = ${item.id}")
                     },
                     modifier = Modifier.weight(0.1f)
@@ -101,7 +111,7 @@ fun ContenidoSeriesListado(navController: NavHostController, servicio: SerieApiS
                 }
                 IconButton(
                     onClick = {
-                        navController.navigate("serieDel/${item.id}")
+                        navController.navigate("serieDel/${item.id ?: 0}")
                         Log.e("SERIE-DEL", "ID = ${item.id}")
                     },
                     modifier = Modifier.weight(0.1f)
@@ -119,21 +129,26 @@ fun ContenidoSeriesListado(navController: NavHostController, servicio: SerieApiS
 
 @Composable
 fun ContenidoSerieEditar(navController: NavHostController, servicio: SerieApiService, pid: Int = 0) {
-    var id by remember { mutableStateOf<Int>(pid) }
-    var name by remember { mutableStateOf<String?>("") }
-    var release_date by remember { mutableStateOf<String?>("") }
-    var rating by remember { mutableStateOf<String?>("") }
-    var category by remember { mutableStateOf<String?>("") }
-    var grabar by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var id by remember { mutableStateOf(pid) }
+    var name by remember { mutableStateOf("") }
+    var release_date by remember { mutableStateOf("") }
+    var rating by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf("") }
 
     if (id != 0) {
         LaunchedEffect(Unit) {
-            val objSerie = servicio.selectSerie(id.toString())
-            delay(100)
-            name = objSerie.body()?.name
-            release_date = objSerie.body()?.release_date
-            rating = objSerie.body()?.rating.toString()
-            category = objSerie.body()?.category
+            try {
+                val objSerie = servicio.selectSerie(id.toString())
+                delay(100)
+                name = objSerie.body()?.name ?: ""
+                release_date = objSerie.body()?.release_date ?: ""
+                rating = objSerie.body()?.rating?.toString() ?: ""
+                category = objSerie.body()?.category ?: ""
+            } catch (e: Exception) {
+                Log.e("SERIE-EDITAR", "Error al obtener serie", e)
+            }
         }
     }
 
@@ -150,66 +165,110 @@ fun ContenidoSerieEditar(navController: NavHostController, servicio: SerieApiSer
             singleLine = true
         )
         TextField(
-            value = name!!,
+            value = name,
             onValueChange = { name = it },
             label = { Text("Name: ") },
             singleLine = true
         )
         TextField(
-            value = release_date!!,
+            value = release_date,
             onValueChange = { release_date = it },
-            label = { Text("Release Date:") },
+            label = { Text("Release Date (Ej: 2024-01-01):") },
             singleLine = true
         )
         TextField(
-            value = rating!!,
+            value = rating,
             onValueChange = { rating = it },
-            label = { Text("Rating:") },
+            label = { Text("Rating (Ej: 5):") },
             singleLine = true
         )
         TextField(
-            value = category!!,
+            value = category,
             onValueChange = { category = it },
-            label = { Text("Category:") },
+            label = { Text("Category (drama, comedy, action, horror):") },
             singleLine = true
         )
         Button(
             onClick = {
-                grabar = true
+                scope.launch {
+                    try {
+                        val ratingValue = rating.toIntOrNull() ?: 0
+                        val categoryValue = category.trim().lowercase()
+                        val idParam = if (id == 0) null else id
+                        val objSerie = SerieModel(
+                            id = idParam,
+                            name = name,
+                            release_date = release_date,
+                            rating = ratingValue,
+                            category = categoryValue
+                        )
+                        val response = if (id == 0) {
+                            servicio.insertSerie(objSerie)
+                        } else {
+                            servicio.updateSerie(id.toString(), objSerie)
+                        }
+
+                        if (response.isSuccessful) {
+                            Toast.makeText(context, "Guardado correctamente", Toast.LENGTH_SHORT).show()
+                            navController.navigate("series") {
+                                popUpTo("series") { inclusive = true }
+                            }
+                        } else {
+                            val errBody = response.errorBody()?.string() ?: ""
+                            val cleanError = if (errBody.contains("<title>")) {
+                                val titleMatch = Regex("<title>(.*?)</title>", RegexOption.DOT_MATCHES_ALL).find(errBody)
+                                titleMatch?.groupValues?.get(1)?.replace("\n", " ")?.trim() ?: errBody.take(100)
+                            } else {
+                                errBody
+                            }
+                            Log.e("SERIE-GRABAR", "Error ${response.code()}: $cleanError")
+                            Toast.makeText(context, "Error ${response.code()}: $cleanError", Toast.LENGTH_LONG).show()
+                        }
+                    } catch (e: Exception) {
+                        Log.e("SERIE-GRABAR", "Excepción al grabar", e)
+                        Toast.makeText(context, "Error de red: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
             }
         ) {
             Text("Grabar", fontSize = 16.sp)
         }
     }
-
-    if (grabar) {
-        val objSerie = SerieModel(id, name!!, release_date!!, rating!!.toInt(), category!!)
-        LaunchedEffect(Unit) {
-            if (id == 0)
-                servicio.insertSerie(objSerie)
-            else
-                servicio.updateSerie(id.toString(), objSerie)
-        }
-        grabar = false
-        navController.navigate("series")
-    }
 }
 
 @Composable
 fun ContenidoSerieEliminar(navController: NavHostController, servicio: SerieApiService, id: Int) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var showDialog by remember { mutableStateOf(true) }
-    var borrar by remember { mutableStateOf(false) }
 
     if (showDialog) {
         AlertDialog(
-            onDismissRequest = { showDialog = false },
+            onDismissRequest = {
+                showDialog = false
+                navController.navigate("series")
+            },
             title = { Text(text = "Confirmar Eliminación") },
             text = { Text("¿Está seguro de eliminar la Serie?") },
             confirmButton = {
                 Button(
                     onClick = {
                         showDialog = false
-                        borrar = true
+                        scope.launch {
+                            try {
+                                val response = servicio.deleteSerie(id.toString())
+                                if (response.isSuccessful) {
+                                    Toast.makeText(context, "Eliminado con éxito", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Error ${response.code()}", Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (e: Exception) {
+                                Log.e("SERIE-ELIMINAR", "Error al eliminar", e)
+                            }
+                            navController.navigate("series") {
+                                popUpTo("series") { inclusive = true }
+                            }
+                        }
                     }
                 ) {
                     Text("Aceptar")
@@ -226,13 +285,5 @@ fun ContenidoSerieEliminar(navController: NavHostController, servicio: SerieApiS
                 }
             }
         )
-    }
-
-    if (borrar) {
-        LaunchedEffect(Unit) {
-            servicio.deleteSerie(id.toString())
-            borrar = false
-            navController.navigate("series")
-        }
     }
 }
